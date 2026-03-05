@@ -34,7 +34,6 @@ function createDeck() {
   return deck;
 }
 
-// Fisher-Yates shuffle (in place, returns shuffled copy)
 function shuffle(arr) {
   const a = arr.slice();
   for (let i = a.length - 1; i > 0; i--) {
@@ -51,18 +50,14 @@ function cardStr(card) {
 
 // ─── Hand Evaluator ───────────────────────────────────────────────────────────
 
-// Evaluate a 5-card hand. Returns array for comparison.
-// [handRank, ...tiebreakers] (higher is better, compare element by element)
 function evaluate5(cards) {
   const sorted = cards.slice().sort((a, b) => b.rank - a.rank);
   const ranks = sorted.map(c => c.rank);
   const suits = sorted.map(c => c.suit);
 
-  // Rank frequency map
   const freq = {};
   for (const r of ranks) freq[r] = (freq[r] || 0) + 1;
 
-  // Group ranks by their frequency count
   const byCount = {};
   for (const [rank, count] of Object.entries(freq)) {
     if (!byCount[count]) byCount[count] = [];
@@ -73,7 +68,6 @@ function evaluate5(cards) {
   const counts = Object.values(freq).sort((a, b) => b - a);
   const isFlush = suits.every(s => s === suits[0]);
 
-  // Check straight
   let isStraight = false;
   let straightHigh = 0;
   const uniqueRanks = [...new Set(ranks)];
@@ -82,7 +76,6 @@ function evaluate5(cards) {
       isStraight = true;
       straightHigh = ranks[0];
     }
-    // Ace-low straight: A-5-4-3-2 (wheel)
     if (ranks[0] === 14 && ranks[1] === 5 && ranks[2] === 4 && ranks[3] === 3 && ranks[4] === 2) {
       isStraight = true;
       straightHigh = 5;
@@ -111,10 +104,9 @@ function evaluate5(cards) {
     return [HAND_RANK.THREE_OF_A_KIND, byCount[3][0], ...(byCount[1] || [])];
   }
   if (counts[0] === 2 && counts[1] === 2) {
-    // byCount[2] has two pairs; ensure ordered high, low
     const pairs = (byCount[2] || []).slice();
     pairs.sort((a, b) => b - a);
-    const kicker = (byCount[1] || [byCount[1]])[0];
+    const kicker = (byCount[1] || [0])[0];
     return [HAND_RANK.TWO_PAIR, pairs[0], pairs[1], kicker];
   }
   if (counts[0] === 2) {
@@ -123,7 +115,6 @@ function evaluate5(cards) {
   return [HAND_RANK.HIGH_CARD, ...ranks];
 }
 
-// Compare two hand value arrays. Returns 1 if h1 > h2, -1 if h1 < h2, 0 if tie.
 function compareHandValues(h1, h2) {
   const len = Math.max(h1.length, h2.length);
   for (let i = 0; i < len; i++) {
@@ -135,7 +126,6 @@ function compareHandValues(h1, h2) {
   return 0;
 }
 
-// All C(n,k) combinations
 function combinations(arr, k) {
   if (k === 0) return [[]];
   if (arr.length < k) return [];
@@ -146,7 +136,6 @@ function combinations(arr, k) {
   ];
 }
 
-// Evaluate the best 5-card hand from 7 cards (hole + community)
 function evaluateHand(cards) {
   const combs = combinations(cards, 5);
   let bestValue = null;
@@ -165,7 +154,6 @@ function evaluateHand(cards) {
   };
 }
 
-// Returns 0 if eval0 wins, 1 if eval1 wins, -1 for tie
 function determineWinner(eval0, eval1) {
   const cmp = compareHandValues(eval0.value, eval1.value);
   if (cmp > 0) return 0;
@@ -199,29 +187,30 @@ class GameEngine {
     this.handNumber = 0;
     this.log = [];
     this.winner = null;
-    this.winningHand = null;
-    this.losingHand = null;
+    this.winReason = null;
+    this.playerEvals = [null, null]; // evaluation for each player
     this.showCards = false;
+    this.lastPotAwarded = 0; // pot amount before it was awarded (for display)
   }
 
   setPlayerNames(name0, name1) {
     this.players[0].name = name0;
     this.players[1].name = name1;
-    this.addLog(`Welcome ${name0} and ${name1}! Good luck!`);
+    this.addLog('Welcome ' + name0 + ' and ' + name1 + '! Good luck!');
   }
 
   startHand() {
-    // Reset hand state (not chips)
     this.handNumber++;
     this.deck = shuffle(createDeck());
     this.communityCards = [];
     this.winner = null;
-    this.winningHand = null;
-    this.losingHand = null;
+    this.winReason = null;
+    this.playerEvals = [null, null];
     this.showCards = false;
     this.pot = 0;
     this.currentBet = 0;
     this.lastRaiseAmount = this.bigBlind;
+    this.lastPotAwarded = 0;
 
     for (const p of this.players) {
       p.hand = [];
@@ -231,7 +220,7 @@ class GameEngine {
       p.hasActed = false;
     }
 
-    // In heads-up: dealer = small blind (acts first preflop, last postflop)
+    // Heads-up: dealer = small blind, acts first preflop
     const sbIdx = this.dealerIdx;
     const bbIdx = (this.dealerIdx + 1) % 2;
 
@@ -240,21 +229,20 @@ class GameEngine {
     this.currentBet = this.bigBlind;
     this.lastRaiseAmount = this.bigBlind;
 
-    // Deal 2 hole cards to each player
+    // Deal hole cards
     for (let i = 0; i < 2; i++) {
       for (const p of this.players) {
         p.hand.push(this.deck.pop());
       }
     }
 
-    // Preflop: dealer (SB) acts first in heads-up
     this.currentPlayerIdx = sbIdx;
     this.phase = 'preflop';
 
     const sbName = this.players[sbIdx].name;
     const bbName = this.players[bbIdx].name;
-    this.addLog(`--- Hand #${this.handNumber} ---`);
-    this.addLog(`${sbName} posts SB $${this.smallBlind}, ${bbName} posts BB $${this.bigBlind}`);
+    this.addLog('--- Hand #' + this.handNumber + ' ---');
+    this.addLog(sbName + ' posts SB $' + this.smallBlind + ', ' + bbName + ' posts BB $' + this.bigBlind);
   }
 
   postBlind(playerIdx, amount, blindType) {
@@ -277,26 +265,21 @@ class GameEngine {
     if (toCall === 0) {
       actions.push('check');
     } else {
-      const callAmt = Math.min(toCall, p.chips);
-      actions.push('call'); // even if it's an all-in call
+      actions.push('call');
     }
 
-    // Can raise if they have chips beyond what's needed to call
-    const minRaiseTotal = this.currentBet + this.lastRaiseAmount;
     const maxBet = p.chips + p.bet;
     if (maxBet > this.currentBet) {
-      if (maxBet >= minRaiseTotal) {
-        actions.push('raise');
-      } else {
-        // Can only all-in raise (less than min raise)
-        if (!actions.includes('raise')) actions.push('raise');
-      }
+      actions.push('raise');
     }
 
     return actions;
   }
 
   placeBet(playerIdx, action, raiseToAmount) {
+    if (this.phase === 'showdown' || this.phase === 'gameover' || this.phase === 'fold') {
+      return { error: 'Hand is over' };
+    }
     if (playerIdx !== this.currentPlayerIdx) {
       return { error: 'Not your turn' };
     }
@@ -305,7 +288,7 @@ class GameEngine {
     const opponent = this.players[(playerIdx + 1) % 2];
     const toCall = this.currentBet - p.bet;
 
-    let logMsg = `${p.name}: `;
+    let logMsg = p.name + ': ';
 
     switch (action) {
       case 'fold':
@@ -313,7 +296,7 @@ class GameEngine {
         p.hasActed = true;
         logMsg += 'folds';
         this.addLog(logMsg);
-        this.endHand(opponent.id, 'fold', null, null);
+        this.endHand(opponent.id, 'fold');
         return { action: 'fold' };
 
       case 'check':
@@ -331,14 +314,13 @@ class GameEngine {
         p.hasActed = true;
         if (p.chips === 0) p.allIn = true;
         logMsg += callAmt < toCall
-          ? `calls all-in for $${callAmt}`
-          : `calls $${callAmt}`;
+          ? 'calls all-in for $' + callAmt
+          : 'calls $' + callAmt;
         this.addLog(logMsg);
         break;
       }
 
       case 'raise': {
-        // raiseToAmount = total bet amount this player will have
         const total = raiseToAmount || (this.currentBet + this.lastRaiseAmount);
         const clampedTotal = Math.min(total, p.chips + p.bet);
         if (clampedTotal <= p.bet) return { error: 'Raise amount too low' };
@@ -353,12 +335,11 @@ class GameEngine {
         this.pot += diff;
         p.hasActed = true;
         if (p.chips === 0) p.allIn = true;
-        // Opponent must act again
         opponent.hasActed = false;
         this.currentBet = Math.max(this.currentBet, p.bet);
         logMsg += p.allIn
-          ? `goes all-in for $${p.bet}`
-          : `raises to $${p.bet}`;
+          ? 'goes all-in for $' + p.bet
+          : 'raises to $' + p.bet;
         this.addLog(logMsg);
         break;
       }
@@ -368,19 +349,20 @@ class GameEngine {
     }
 
     this.advanceTurn();
-    return { action, success: true };
+    return { action: action, success: true };
   }
 
   advanceTurn() {
-    // Check if betting round is complete
     if (this.isBettingRoundComplete()) {
       this.advancePhase();
     } else {
-      // Move to next active player
       this.currentPlayerIdx = (this.currentPlayerIdx + 1) % 2;
-      // If that player is all-in, check again
       if (this.players[this.currentPlayerIdx].allIn) {
-        this.advanceTurn(); // will either advance phase or find next player
+        // If next player is all-in, check if round is done
+        if (this.isBettingRoundComplete()) {
+          this.advancePhase();
+        }
+        // If not done, the non-all-in player still needs to act
       }
     }
   }
@@ -388,24 +370,16 @@ class GameEngine {
   isBettingRoundComplete() {
     const [p0, p1] = this.players;
 
-    // If someone folded, it's handled in placeBet directly
     if (p0.folded || p1.folded) return false;
-
-    // Both all-in: no more betting possible
     if (p0.allIn && p1.allIn) return true;
-
-    // One all-in: other player has matched or went all-in too
     if (p0.allIn && p1.hasActed && p1.bet >= p0.bet) return true;
     if (p1.allIn && p0.hasActed && p0.bet >= p1.bet) return true;
-
-    // Both have acted and bets are equal
     if (p0.hasActed && p1.hasActed && p0.bet === p1.bet) return true;
 
     return false;
   }
 
   advancePhase() {
-    // Reset bets and acted flags for new round
     for (const p of this.players) {
       p.bet = 0;
       p.hasActed = false;
@@ -414,30 +388,27 @@ class GameEngine {
     this.lastRaiseAmount = this.bigBlind;
 
     if (this.phase === 'preflop') {
-      // Deal flop
       this.deck.pop(); // burn
       this.communityCards.push(this.deck.pop(), this.deck.pop(), this.deck.pop());
       this.phase = 'flop';
-      this.addLog(`Flop: ${this.communityCards.map(c => cardStr(c)).join(' ')}`);
+      this.addLog('Flop: ' + this.communityCards.map(function(c) { return cardStr(c); }).join(' '));
     } else if (this.phase === 'flop') {
-      this.deck.pop(); // burn
+      this.deck.pop();
       this.communityCards.push(this.deck.pop());
       this.phase = 'turn';
-      this.addLog(`Turn: ${cardStr(this.communityCards[3])}`);
+      this.addLog('Turn: ' + cardStr(this.communityCards[3]));
     } else if (this.phase === 'turn') {
-      this.deck.pop(); // burn
+      this.deck.pop();
       this.communityCards.push(this.deck.pop());
       this.phase = 'river';
-      this.addLog(`River: ${cardStr(this.communityCards[4])}`);
+      this.addLog('River: ' + cardStr(this.communityCards[4]));
     } else if (this.phase === 'river') {
       this.doShowdown();
       return;
     }
 
-    // Post-flop: non-dealer acts first (big blind position, which is dealer+1)
+    // Post-flop: BB (non-dealer) acts first
     this.currentPlayerIdx = (this.dealerIdx + 1) % 2;
-
-    // Handle case where that player is all-in
     this.handleAllInSkip();
   }
 
@@ -447,29 +418,27 @@ class GameEngine {
       this.runToShowdown();
       return;
     }
-    // If current player is all-in, switch to opponent
     if (this.players[this.currentPlayerIdx].allIn) {
       this.currentPlayerIdx = (this.currentPlayerIdx + 1) % 2;
     }
   }
 
   runToShowdown() {
-    // Deal remaining community cards without betting
     while (this.communityCards.length < 5) {
       if (this.communityCards.length < 3) {
         this.deck.pop();
         while (this.communityCards.length < 3) {
           this.communityCards.push(this.deck.pop());
         }
-        this.addLog(`Flop: ${this.communityCards.slice(0, 3).map(c => cardStr(c)).join(' ')}`);
+        this.addLog('Flop: ' + this.communityCards.slice(0, 3).map(function(c) { return cardStr(c); }).join(' '));
       } else if (this.communityCards.length === 3) {
         this.deck.pop();
         this.communityCards.push(this.deck.pop());
-        this.addLog(`Turn: ${cardStr(this.communityCards[3])}`);
+        this.addLog('Turn: ' + cardStr(this.communityCards[3]));
       } else if (this.communityCards.length === 4) {
         this.deck.pop();
         this.communityCards.push(this.deck.pop());
-        this.addLog(`River: ${cardStr(this.communityCards[4])}`);
+        this.addLog('River: ' + cardStr(this.communityCards[4]));
       }
     }
     this.doShowdown();
@@ -483,68 +452,73 @@ class GameEngine {
     const eval0 = evaluateHand([...p0.hand, ...this.communityCards]);
     const eval1 = evaluateHand([...p1.hand, ...this.communityCards]);
 
-    this.addLog(`Showdown: ${p0.name} shows ${eval0.name} | ${p1.name} shows ${eval1.name}`);
+    // Store each player's evaluation correctly indexed
+    this.playerEvals = [eval0, eval1];
+
+    this.addLog('Showdown: ' + p0.name + ' shows ' + eval0.name + ' | ' + p1.name + ' shows ' + eval1.name);
 
     const result = determineWinner(eval0, eval1);
     if (result === 0) {
-      this.endHand(0, 'showdown', eval0, eval1);
+      this.endHand(0, 'showdown');
     } else if (result === 1) {
-      this.endHand(1, 'showdown', eval0, eval1);
+      this.endHand(1, 'showdown');
     } else {
-      this.endHandTie(eval0, eval1);
+      this.endHandTie();
     }
   }
 
-  endHand(winnerIdx, reason, winEval, loseEval) {
+  endHand(winnerIdx, reason) {
     const winner = this.players[winnerIdx];
     const loserIdx = (winnerIdx + 1) % 2;
     const loser = this.players[loserIdx];
 
+    this.lastPotAwarded = this.pot;
     winner.chips += this.pot;
     this.winner = winnerIdx;
+    this.winReason = reason;
 
-    if (reason === 'showdown') {
-      this.winningHand = winnerIdx === 0 ? winEval : loseEval;
-      this.losingHand = winnerIdx === 0 ? loseEval : winEval;
-      this.addLog(`${winner.name} wins $${this.pot} with ${(winnerIdx === 0 ? winEval : loseEval).name}!`);
+    if (reason === 'fold') {
+      this.phase = 'fold';
+      this.addLog(winner.name + ' wins $' + this.pot + ' (opponent folded)');
     } else {
-      this.addLog(`${winner.name} wins $${this.pot} (opponent folded)`);
+      this.addLog(winner.name + ' wins $' + this.pot + ' with ' + this.playerEvals[winnerIdx].name + '!');
     }
 
     this.pot = 0;
 
     if (loser.chips === 0) {
       this.phase = 'gameover';
-      this.addLog(`Game over! ${winner.name} wins everything!`);
+      this.addLog('Game over! ' + winner.name + ' wins everything!');
     }
 
     // Advance dealer for next hand
     this.dealerIdx = (this.dealerIdx + 1) % 2;
   }
 
-  endHandTie(eval0, eval1) {
+  endHandTie() {
     this.winner = -1;
-    this.winningHand = eval0;
-    this.losingHand = eval1;
+    this.winReason = 'tie';
+    this.lastPotAwarded = this.pot;
     const half = Math.floor(this.pot / 2);
     this.players[0].chips += half;
     this.players[1].chips += (this.pot - half);
+    this.addLog('Split pot! $' + this.pot + ' divided equally');
     this.pot = 0;
-    this.addLog(`Split pot! ${eval0.name} vs ${eval1.name}`);
     this.dealerIdx = (this.dealerIdx + 1) % 2;
   }
 
   addLog(msg) {
     this.log.unshift(msg);
-    if (this.log.length > 30) this.log.pop();
+    if (this.log.length > 50) this.log.pop();
   }
 
-  // Serialize state for P2P transmission; hide opponent's hole cards unless showdown
+  // Serialize state for P2P transmission
   getState(forPlayerIdx) {
     return {
       phase: this.phase,
       communityCards: this.communityCards,
       pot: this.pot,
+      lastPotAwarded: this.lastPotAwarded,
       currentPlayerIdx: this.currentPlayerIdx,
       dealerIdx: this.dealerIdx,
       currentBet: this.currentBet,
@@ -552,26 +526,26 @@ class GameEngine {
       handNumber: this.handNumber,
       log: this.log,
       winner: this.winner,
-      winningHand: this.winningHand,
-      losingHand: this.losingHand,
+      winReason: this.winReason,
+      playerEvals: (this.showCards || this.phase === 'fold') ? this.playerEvals : [null, null],
       showCards: this.showCards,
-      players: this.players.map((p, idx) => ({
-        id: p.id,
-        name: p.name,
-        chips: p.chips,
-        bet: p.bet,
-        folded: p.folded,
-        allIn: p.allIn,
-        // Show cards only if it's the local player's hand or if showdown
-        hand: (idx === forPlayerIdx || this.showCards)
-          ? p.hand
-          : p.hand.map(() => ({ hidden: true }))
-      }))
+      players: this.players.map(function(p, idx) {
+        return {
+          id: p.id,
+          name: p.name,
+          chips: p.chips,
+          bet: p.bet,
+          folded: p.folded,
+          allIn: p.allIn,
+          hand: (idx === forPlayerIdx || this.showCards)
+            ? p.hand
+            : p.hand.map(function() { return { hidden: true }; })
+        };
+      }.bind(this))
     };
   }
 }
 
-// Expose to global scope
 window.GameEngine = GameEngine;
 window.evaluateHand = evaluateHand;
 window.SUIT_SYMBOLS = SUIT_SYMBOLS;

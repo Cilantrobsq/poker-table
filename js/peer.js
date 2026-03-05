@@ -1,31 +1,23 @@
 'use strict';
 
 // ─── PeerJS Networking Module ─────────────────────────────────────────────────
-// Handles P2P connection using PeerJS (free cloud signaling via 0.peerjs.com)
-//
-// Architecture:
-//   Host: creates a Peer with ID = "poker-" + roomCode, runs authoritative game state
-//   Guest: connects to host's Peer ID, sends actions, receives state updates
-//
-// Message protocol:
-//   host -> guest: { type: 'state', state: <GameState> }
-//   host -> guest: { type: 'start', state: <GameState> }
-//   host -> guest: { type: 'chat', text: <string> }
-//   guest -> host: { type: 'action', action: <string>, amount: <number> }
-//   guest -> host: { type: 'name', name: <string> }
-//   guest -> host: { type: 'ready' }
 
 const Network = (function () {
   let peer = null;
   let conn = null;
   let isHost = false;
-  let localPlayerIdx = -1; // 0 = host, 1 = guest
+  let localPlayerIdx = -1;
   let roomCode = '';
   let disconnectTimer = null;
+  let reconnectAttempts = 0;
+  let maxReconnectAttempts = 5;
   let onMessageCallback = null;
   let onConnectedCallback = null;
   let onDisconnectedCallback = null;
   let onErrorCallback = null;
+  let lastHostName = '';
+  let lastGuestName = '';
+  let lastCallbacks = null;
 
   function generateRoomCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -37,23 +29,30 @@ const Network = (function () {
   }
 
   function getPeerOptions() {
-    // Use PeerJS free cloud server (0.peerjs.com)
     return {
       host: '0.peerjs.com',
       port: 443,
       secure: true,
-      debug: 0
+      debug: 0,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' }
+        ]
+      }
     };
   }
 
-  // Host: create a peer and wait for a guest to connect
   function hostGame(localName, callbacks) {
     isHost = true;
     localPlayerIdx = 0;
     roomCode = generateRoomCode();
+    lastHostName = localName;
+    lastCallbacks = callbacks;
     setCallbacks(callbacks);
 
-    const peerId = 'poker-' + roomCode;
+    var peerId = 'poker-' + roomCode;
 
     try {
       peer = new Peer(peerId, getPeerOptions());
@@ -64,12 +63,12 @@ const Network = (function () {
 
     peer.on('open', function (id) {
       console.log('PeerJS: Host peer opened with ID', id);
+      reconnectAttempts = 0;
       callbacks.onRoomCodeReady && callbacks.onRoomCodeReady(roomCode);
     });
 
     peer.on('connection', function (connection) {
-      if (conn) {
-        // Already have a connection, reject
+      if (conn && conn.open) {
         connection.close();
         return;
       }
@@ -79,29 +78,33 @@ const Network = (function () {
 
     peer.on('error', function (err) {
       console.error('PeerJS error:', err);
-      const msg = err.type === 'unavailable-id'
+      var msg = err.type === 'unavailable-id'
         ? 'Room code taken, please try again'
-        : 'Connection error: ' + err.message;
+        : 'Connection error: ' + (err.message || err.type);
       onErrorCallback && onErrorCallback(msg);
     });
 
     peer.on('disconnected', function () {
-      console.log('PeerJS: Peer disconnected from signaling server');
-      // Try to reconnect
-      if (peer && !peer.destroyed) {
-        peer.reconnect();
+      console.log('PeerJS: Host disconnected from signaling server');
+      if (peer && !peer.destroyed && reconnectAttempts < maxReconnectAttempts) {
+        reconnectAttempts++;
+        console.log('PeerJS: Reconnecting attempt ' + reconnectAttempts);
+        setTimeout(function() {
+          if (peer && !peer.destroyed) peer.reconnect();
+        }, 1000 * reconnectAttempts);
       }
     });
   }
 
-  // Guest: connect to a host's room
   function joinGame(roomCodeInput, localName, callbacks) {
     isHost = false;
     localPlayerIdx = 1;
     roomCode = roomCodeInput.toUpperCase().trim();
+    lastGuestName = localName;
+    lastCallbacks = callbacks;
     setCallbacks(callbacks);
 
-    const peerId = 'poker-' + roomCode;
+    var peerId = 'poker-' + roomCode;
 
     try {
       peer = new Peer(getPeerOptions());
@@ -112,16 +115,27 @@ const Network = (function () {
 
     peer.on('open', function () {
       console.log('PeerJS: Guest peer opened, connecting to', peerId);
+      reconnectAttempts = 0;
       conn = peer.connect(peerId, { reliable: true });
       setupConnection(conn, localName);
     });
 
     peer.on('error', function (err) {
       console.error('PeerJS error:', err);
-      const msg = err.type === 'peer-unavailable'
+      var msg = err.type === 'peer-unavailable'
         ? 'Room not found. Check the code and try again.'
-        : 'Connection error: ' + err.message;
+        : 'Connection error: ' + (err.message || err.type);
       onErrorCallback && onErrorCallback(msg);
+    });
+
+    peer.on('disconnected', function () {
+      console.log('PeerJS: Guest disconnected from signaling server');
+      if (peer && !peer.destroyed && reconnectAttempts < maxReconnectAttempts) {
+        reconnectAttempts++;
+        setTimeout(function() {
+          if (peer && !peer.destroyed) peer.reconnect();
+        }, 1000 * reconnectAttempts);
+      }
     });
   }
 
@@ -129,16 +143,18 @@ const Network = (function () {
     connection.on('open', function () {
       console.log('PeerJS: Connection established');
       clearDisconnectTimer();
+      reconnectAttempts = 0;
 
-      // Exchange names
-      sendMessage({ type: 'name', name: localName, playerIdx: localPlayerIdx });
+      if (isHost) {
+        sendMessage({ type: 'name', name: localName, playerIdx: localPlayerIdx });
+      }
 
       onConnectedCallback && onConnectedCallback(localPlayerIdx);
     });
 
     connection.on('data', function (data) {
       try {
-        const msg = typeof data === 'string' ? JSON.parse(data) : data;
+        var msg = typeof data === 'string' ? JSON.parse(data) : data;
         handleMessage(msg);
       } catch (e) {
         console.error('Failed to parse message:', e);
@@ -152,12 +168,10 @@ const Network = (function () {
 
     connection.on('error', function (err) {
       console.error('PeerJS connection error:', err);
-      onErrorCallback && onErrorCallback('Connection error: ' + err.message);
     });
   }
 
   function handleMessage(msg) {
-    console.log('PeerJS received:', msg.type);
     if (onMessageCallback) {
       onMessageCallback(msg);
     }
@@ -165,11 +179,11 @@ const Network = (function () {
 
   function handleDisconnect() {
     clearDisconnectTimer();
-    // Give 30 seconds for reconnect before firing disconnect callback
+    // Wait 15 seconds for reconnect before firing disconnect
+    onErrorCallback && onErrorCallback('Connection lost. Waiting for reconnect...');
     disconnectTimer = setTimeout(function () {
       onDisconnectedCallback && onDisconnectedCallback();
-    }, 30000);
-    onErrorCallback && onErrorCallback('Opponent disconnected. Waiting 30s for reconnect...');
+    }, 15000);
   }
 
   function clearDisconnectTimer() {
@@ -183,26 +197,26 @@ const Network = (function () {
     if (conn && conn.open) {
       try {
         conn.send(msg);
+        return true;
       } catch (e) {
         console.error('Failed to send message:', e);
-        onErrorCallback && onErrorCallback('Failed to send message: ' + e.message);
+        return false;
       }
-    } else {
-      console.warn('Cannot send: connection not open');
     }
+    console.warn('Cannot send: connection not open');
+    return false;
   }
 
   function sendAction(action, amount) {
-    sendMessage({ type: 'action', action, amount: amount || 0 });
+    sendMessage({ type: 'action', action: action, amount: amount || 0 });
   }
 
-  function sendState(state, forPlayerIdx) {
-    // Host calls this to broadcast state to guest
-    sendMessage({ type: 'state', state });
+  function sendState(state) {
+    sendMessage({ type: 'state', state: state });
   }
 
   function sendStart(state) {
-    sendMessage({ type: 'start', state });
+    sendMessage({ type: 'start', state: state });
   }
 
   function disconnect() {
@@ -212,6 +226,7 @@ const Network = (function () {
     isHost = false;
     localPlayerIdx = -1;
     roomCode = '';
+    reconnectAttempts = 0;
   }
 
   function setCallbacks(cbs) {
@@ -230,18 +245,18 @@ const Network = (function () {
   function getRoomCode() { return roomCode; }
 
   return {
-    hostGame,
-    joinGame,
-    sendAction,
-    sendState,
-    sendStart,
-    sendMessage,
-    disconnect,
-    isConnected,
-    getLocalPlayerIdx,
-    getIsHost,
-    getRoomCode,
-    generateRoomCode
+    hostGame: hostGame,
+    joinGame: joinGame,
+    sendAction: sendAction,
+    sendState: sendState,
+    sendStart: sendStart,
+    sendMessage: sendMessage,
+    disconnect: disconnect,
+    isConnected: isConnected,
+    getLocalPlayerIdx: getLocalPlayerIdx,
+    getIsHost: getIsHost,
+    getRoomCode: getRoomCode,
+    generateRoomCode: generateRoomCode
   };
 })();
 

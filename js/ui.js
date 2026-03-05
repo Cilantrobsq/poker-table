@@ -1,106 +1,127 @@
 'use strict';
 
 // ─── UI Module ────────────────────────────────────────────────────────────────
-// Handles all DOM rendering. Pure display logic, no game state mutation.
 
-const UI = (function () {
+var UI = (function () {
 
-  // Render a single card element
+  // Track rendered card keys to avoid re-animating unchanged cards
+  var lastRenderedCards = {};
+
+  function cardKey(card) {
+    if (!card || card.hidden) return 'hidden';
+    return card.rank + '-' + card.suit;
+  }
+
   function renderCard(card, faceDown) {
-    const el = document.createElement('div');
+    var el = document.createElement('div');
     el.className = 'card';
     if (faceDown || !card || card.hidden) {
       el.classList.add('card-back');
       el.innerHTML = '';
     } else {
-      const isRed = card.suit === 'H' || card.suit === 'D';
+      var isRed = card.suit === 'H' || card.suit === 'D';
       el.classList.add(isRed ? 'card-red' : 'card-black');
-      const rankName = window.RANK_NAMES[card.rank] || card.rank;
-      const suitSymbol = window.SUIT_SYMBOLS[card.suit] || card.suit;
-      el.innerHTML = `
-        <span class="card-rank-top">${rankName}</span>
-        <span class="card-suit-center">${suitSymbol}</span>
-        <span class="card-rank-bottom">${rankName}</span>
-      `;
+      var rankName = window.RANK_NAMES[card.rank] || card.rank;
+      var suitSymbol = window.SUIT_SYMBOLS[card.suit] || card.suit;
+      el.innerHTML =
+        '<span class="card-rank-top">' + rankName + '</span>' +
+        '<span class="card-suit-center">' + suitSymbol + '</span>' +
+        '<span class="card-rank-bottom">' + rankName + '</span>';
     }
     return el;
   }
 
-  function renderCards(cards, container, faceDown) {
-    container.innerHTML = '';
-    if (!cards || cards.length === 0) {
-      // Show placeholder cards
-      const count = faceDown ? 2 : 5;
-      for (let i = 0; i < count; i++) {
-        const placeholder = document.createElement('div');
-        placeholder.className = 'card card-placeholder';
-        container.appendChild(placeholder);
-      }
+  function renderCardsWithAnimation(cards, container, animClass, cacheKey) {
+    if (!cards) {
+      container.innerHTML = '';
       return;
     }
-    for (const card of cards) {
-      container.appendChild(renderCard(card, faceDown && !card.hidden && card.suit !== undefined ? false : false));
+
+    var newKeys = cards.map(function(c) { return cardKey(c); }).join(',');
+    var oldKeys = lastRenderedCards[cacheKey] || '';
+
+    // Only re-render if cards actually changed
+    if (newKeys === oldKeys && container.children.length === cards.length) return;
+    lastRenderedCards[cacheKey] = newKeys;
+
+    container.innerHTML = '';
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
+      var cardEl = renderCard(card, card.hidden);
+      // Only animate new cards (not ones that were already displayed)
+      var wasPresent = oldKeys.indexOf(cardKey(card)) >= 0;
+      if (!wasPresent && animClass) {
+        cardEl.classList.add(animClass);
+        if (animClass === 'card-community-bounce') {
+          cardEl.style.animationDelay = (i * 0.08) + 's';
+        }
+      }
+      container.appendChild(cardEl);
     }
   }
 
   function renderCommunityCards(cards, container) {
-    container.innerHTML = '';
-    for (let i = 0; i < 5; i++) {
-      const card = cards && cards[i];
-      if (card) {
-        container.appendChild(renderCard(card, false));
-      } else {
-        const placeholder = document.createElement('div');
-        placeholder.className = 'card card-placeholder';
-        container.appendChild(placeholder);
+    var displayCards = [];
+    for (var i = 0; i < 5; i++) {
+      if (cards && cards[i]) {
+        displayCards.push(cards[i]);
       }
+    }
+
+    renderCardsWithAnimation(displayCards, container, 'card-community-bounce', 'community');
+
+    // Fill remaining placeholders
+    while (container.children.length < 5) {
+      var placeholder = document.createElement('div');
+      placeholder.className = 'card card-placeholder';
+      container.appendChild(placeholder);
     }
   }
 
-  // Render a player area (opponent at top, local player at bottom)
   function renderPlayer(playerData, isLocal, isCurrent, isDealer, container) {
-    const nameEl = container.querySelector('.player-name');
-    const chipsEl = container.querySelector('.player-chips');
-    const betEl = container.querySelector('.player-bet');
-    const cardsEl = container.querySelector('.player-cards');
-    const statusEl = container.querySelector('.player-status');
-    const dealerBtn = container.querySelector('.dealer-btn');
+    var nameEl = container.querySelector('.player-name');
+    var chipsEl = container.querySelector('.player-chips');
+    var betEl = container.querySelector('.player-bet');
+    var cardsEl = container.querySelector('.player-cards');
+    var statusEl = container.querySelector('.player-status');
+    var dealerBtn = container.querySelector('.dealer-btn');
 
     if (nameEl) nameEl.textContent = playerData.name;
-    if (chipsEl) chipsEl.textContent = `$${playerData.chips}`;
+    if (chipsEl) chipsEl.textContent = '$' + playerData.chips;
     if (betEl) {
-      betEl.textContent = playerData.bet > 0 ? `Bet: $${playerData.bet}` : '';
+      betEl.textContent = playerData.bet > 0 ? 'Bet: $' + playerData.bet : '';
     }
 
     if (dealerBtn) {
       dealerBtn.style.display = isDealer ? 'inline-flex' : 'none';
     }
 
-    // Status badges
-    let statusText = '';
+    var statusText = '';
     if (playerData.folded) statusText = 'Folded';
-    else if (playerData.allIn) statusText = 'All In';
-    else if (isCurrent) statusText = 'Your Turn';
+    else if (playerData.allIn) statusText = 'ALL IN';
+    else if (isCurrent && isLocal) statusText = 'Your Turn';
+    else if (isCurrent && !isLocal) statusText = 'Thinking...';
     if (statusEl) {
       statusEl.textContent = statusText;
-      statusEl.className = 'player-status' + (isCurrent ? ' active' : '');
+      statusEl.className = 'player-status';
+      if (isCurrent && isLocal) statusEl.classList.add('active', 'pulse');
+      else if (isCurrent) statusEl.classList.add('opponent-thinking');
+      if (playerData.allIn) statusEl.classList.add('allin-badge');
     }
 
-    // Turn highlight
     container.classList.toggle('player-active', isCurrent);
     container.classList.toggle('player-folded', playerData.folded);
 
-    // Render cards
+    // Render hole cards (with animation caching)
     if (cardsEl) {
-      cardsEl.innerHTML = '';
-      const isOpponent = !isLocal;
+      var cacheKey = isLocal ? 'local-cards' : 'opp-cards';
       if (playerData.hand && playerData.hand.length > 0) {
-        for (const card of playerData.hand) {
-          cardsEl.appendChild(renderCard(card, isOpponent && card.hidden));
-        }
+        renderCardsWithAnimation(playerData.hand, cardsEl, 'card-deal-in', cacheKey);
       } else {
-        for (let i = 0; i < 2; i++) {
-          const ph = document.createElement('div');
+        lastRenderedCards[cacheKey] = '';
+        cardsEl.innerHTML = '';
+        for (var i = 0; i < 2; i++) {
+          var ph = document.createElement('div');
           ph.className = 'card card-placeholder';
           cardsEl.appendChild(ph);
         }
@@ -108,106 +129,118 @@ const UI = (function () {
     }
   }
 
-  // Main render function - renders the full game table
   function renderTable(state, localPlayerIdx) {
     if (!state) return;
 
-    const localPlayer = state.players[localPlayerIdx];
-    const opponentIdx = (localPlayerIdx + 1) % 2;
-    const opponentPlayer = state.players[opponentIdx];
+    var localPlayer = state.players[localPlayerIdx];
+    var opponentIdx = (localPlayerIdx + 1) % 2;
+    var opponentPlayer = state.players[opponentIdx];
 
-    // Render opponent (top)
-    const opponentArea = document.getElementById('player-opponent');
+    // Render opponent
+    var opponentArea = document.getElementById('player-opponent');
     if (opponentArea) {
-      const isOpponentCurrent = state.currentPlayerIdx === opponentIdx;
-      const isOpponentDealer = state.dealerIdx === opponentIdx;
+      var isOpponentCurrent = state.currentPlayerIdx === opponentIdx;
+      var isOpponentDealer = state.dealerIdx === opponentIdx;
       renderPlayer(opponentPlayer, false, isOpponentCurrent, isOpponentDealer, opponentArea);
     }
 
-    // Render local player (bottom)
-    const localArea = document.getElementById('player-local');
+    // Render local player
+    var localArea = document.getElementById('player-local');
     if (localArea) {
-      const isLocalCurrent = state.currentPlayerIdx === localPlayerIdx;
-      const isLocalDealer = state.dealerIdx === localPlayerIdx;
+      var isLocalCurrent = state.currentPlayerIdx === localPlayerIdx;
+      var isLocalDealer = state.dealerIdx === localPlayerIdx;
       renderPlayer(localPlayer, true, isLocalCurrent, isLocalDealer, localArea);
     }
 
-    // Render community cards
-    const communityEl = document.getElementById('community-cards');
+    // Community cards
+    var communityEl = document.getElementById('community-cards');
     if (communityEl) {
       renderCommunityCards(state.communityCards, communityEl);
     }
 
-    // Pot
-    const potEl = document.getElementById('pot-amount');
-    if (potEl) potEl.textContent = `$${state.pot}`;
+    // Pot (show lastPotAwarded during showdown/fold since pot is zeroed)
+    var potEl = document.getElementById('pot-amount');
+    if (potEl) {
+      var displayPot = state.pot;
+      if ((state.phase === 'showdown' || state.phase === 'fold' || state.phase === 'gameover') && state.pot === 0 && state.lastPotAwarded > 0) {
+        displayPot = state.lastPotAwarded;
+      }
+      potEl.textContent = '$' + displayPot;
+    }
 
     // Phase label
-    const phaseEl = document.getElementById('phase-label');
+    var phaseEl = document.getElementById('phase-label');
     if (phaseEl) {
-      const phaseNames = {
+      var phaseNames = {
         lobby: 'Lobby', preflop: 'Pre-Flop', flop: 'Flop',
-        turn: 'Turn', river: 'River', showdown: 'Showdown', gameover: 'Game Over'
+        turn: 'Turn', river: 'River', showdown: 'Showdown',
+        fold: 'Hand Over', gameover: 'Game Over'
       };
       phaseEl.textContent = phaseNames[state.phase] || state.phase;
     }
 
     // Game log
-    const logEl = document.getElementById('game-log');
+    var logEl = document.getElementById('game-log');
     if (logEl && state.log) {
-      logEl.innerHTML = state.log.map(entry => `<div class="log-entry">${escapeHtml(entry)}</div>`).join('');
+      logEl.innerHTML = state.log.map(function(entry) { return '<div class="log-entry">' + escapeHtml(entry) + '</div>'; }).join('');
     }
 
-    // Betting controls
     renderControls(state, localPlayerIdx);
-
-    // Showdown overlay
     renderShowdown(state, localPlayerIdx);
   }
 
   function renderControls(state, localPlayerIdx) {
-    const controlsEl = document.getElementById('betting-controls');
+    var controlsEl = document.getElementById('betting-controls');
     if (!controlsEl) return;
 
-    const isMyTurn = state.currentPlayerIdx === localPlayerIdx;
-    const phase = state.phase;
-    const isActive = isMyTurn && (phase === 'preflop' || phase === 'flop' || phase === 'turn' || phase === 'river');
+    var isMyTurn = state.currentPlayerIdx === localPlayerIdx;
+    var phase = state.phase;
+    var isActive = isMyTurn && (phase === 'preflop' || phase === 'flop' || phase === 'turn' || phase === 'river');
 
     controlsEl.classList.toggle('controls-active', isActive);
+    controlsEl.classList.toggle('controls-waiting', !isActive && phase !== 'showdown' && phase !== 'gameover' && phase !== 'fold' && phase !== 'lobby');
 
-    const foldBtn = document.getElementById('btn-fold');
-    const checkCallBtn = document.getElementById('btn-check-call');
-    const raiseBtn = document.getElementById('btn-raise');
-    const raiseInput = document.getElementById('raise-amount');
-    const raiseSlider = document.getElementById('raise-slider');
+    var foldBtn = document.getElementById('btn-fold');
+    var checkCallBtn = document.getElementById('btn-check-call');
+    var raiseBtn = document.getElementById('btn-raise');
+    var raiseInput = document.getElementById('raise-amount');
+    var raiseSlider = document.getElementById('raise-slider');
+    var allinBtn = document.getElementById('btn-allin');
 
     if (!foldBtn) return;
 
     foldBtn.disabled = !isActive;
     checkCallBtn.disabled = !isActive;
     raiseBtn.disabled = !isActive;
+    if (allinBtn) allinBtn.disabled = !isActive;
     if (raiseInput) raiseInput.disabled = !isActive;
     if (raiseSlider) raiseSlider.disabled = !isActive;
 
     if (isActive) {
-      const localPlayer = state.players[localPlayerIdx];
-      const toCall = state.currentBet - localPlayer.bet;
+      var localPlayer = state.players[localPlayerIdx];
+      var toCall = state.currentBet - localPlayer.bet;
 
-      // Check/Call button label
       if (toCall === 0) {
         checkCallBtn.textContent = 'Check';
         checkCallBtn.dataset.action = 'check';
+        checkCallBtn.className = 'btn';
+        checkCallBtn.style.background = 'var(--btn-call)';
+        checkCallBtn.style.color = '#fff';
       } else {
-        const callAmt = Math.min(toCall, localPlayer.chips);
-        checkCallBtn.textContent = callAmt >= localPlayer.chips
-          ? `Call All-In $${callAmt}`
-          : `Call $${callAmt}`;
+        var callAmt = Math.min(toCall, localPlayer.chips);
+        if (callAmt >= localPlayer.chips) {
+          checkCallBtn.textContent = 'Call All-In $' + callAmt;
+        } else {
+          checkCallBtn.textContent = 'Call $' + callAmt;
+        }
         checkCallBtn.dataset.action = 'call';
+        checkCallBtn.className = 'btn';
+        checkCallBtn.style.background = 'var(--btn-call)';
+        checkCallBtn.style.color = '#fff';
       }
 
-      // Raise slider range
-      const minRaise = state.currentBet + (state.lastRaiseAmount || state.bigBlind || 20);
-      const maxRaise = localPlayer.chips + localPlayer.bet;
+      var minRaise = state.currentBet + (state.lastRaiseAmount || 20);
+      var maxRaise = localPlayer.chips + localPlayer.bet;
       if (raiseSlider && raiseInput) {
         raiseSlider.min = Math.min(minRaise, maxRaise);
         raiseSlider.max = maxRaise;
@@ -215,57 +248,192 @@ const UI = (function () {
           raiseSlider.value = raiseSlider.min;
           raiseInput.value = raiseSlider.min;
         }
-        raiseBtn.textContent = `Raise to $${raiseInput.value || raiseSlider.min}`;
+        raiseInput.min = raiseSlider.min;
+        raiseInput.max = raiseSlider.max;
+        raiseBtn.textContent = 'Raise to $' + (raiseInput.value || raiseSlider.min);
       }
 
-      // Hide raise if can't raise more
       if (raiseBtn) {
         raiseBtn.style.visibility = maxRaise > state.currentBet ? 'visible' : 'hidden';
+      }
+      if (allinBtn) {
+        allinBtn.style.visibility = localPlayer.chips > 0 ? 'visible' : 'hidden';
       }
     } else {
       if (checkCallBtn) checkCallBtn.textContent = 'Check / Call';
       if (raiseBtn) raiseBtn.textContent = 'Raise';
     }
 
-    // Show/hide controls based on game phase
-    const showControls = phase !== 'lobby' && phase !== 'showdown' && phase !== 'gameover';
+    // Show/hide controls
+    var showControls = phase !== 'lobby' && phase !== 'showdown' && phase !== 'gameover' && phase !== 'fold';
     controlsEl.style.display = showControls ? 'flex' : 'none';
   }
 
+  function renderShowdownHands(state, localPlayerIdx) {
+    var handsEl = document.getElementById('showdown-hands');
+    if (!handsEl) return;
+    handsEl.innerHTML = '';
+
+    var showPhases = ['showdown', 'gameover'];
+    if (showPhases.indexOf(state.phase) === -1) return;
+    if (!state.showCards) return;
+
+    var opponentIdx = (localPlayerIdx + 1) % 2;
+    var players = [
+      { data: state.players[localPlayerIdx], label: 'You', idx: localPlayerIdx },
+      { data: state.players[opponentIdx], label: state.players[opponentIdx].name, idx: opponentIdx }
+    ];
+
+    // Get the winner's eval for highlighting
+    var winnerEval = null;
+    if (state.playerEvals) {
+      if (state.winner >= 0) {
+        winnerEval = state.playerEvals[state.winner];
+      }
+    }
+    var winCards = winnerEval && winnerEval.cards ? winnerEval.cards : [];
+
+    for (var p = 0; p < players.length; p++) {
+      var player = players[p];
+      var row = document.createElement('div');
+      row.className = 'showdown-player-hand';
+      var isWinner = state.winner === player.idx || state.winner === -1;
+
+      var nameSpan = document.createElement('div');
+      nameSpan.className = 'showdown-hand-label' + (isWinner && state.winner !== -1 ? ' showdown-winner-label' : '');
+      nameSpan.textContent = player.label;
+      row.appendChild(nameSpan);
+
+      var cardsRow = document.createElement('div');
+      cardsRow.className = 'showdown-cards-row';
+      if (player.data.hand) {
+        for (var c = 0; c < player.data.hand.length; c++) {
+          var card = player.data.hand[c];
+          var cardEl = renderCard(card, card.hidden);
+          if (isCardInWinning(card, winCards) && isWinner) {
+            cardEl.classList.add('card-winner');
+          }
+          cardEl.classList.add('card-flip-reveal');
+          cardEl.style.animationDelay = (c * 0.15) + 's';
+          cardsRow.appendChild(cardEl);
+        }
+      }
+      row.appendChild(cardsRow);
+
+      // Hand name from playerEvals (correctly indexed)
+      var handNameEl = document.createElement('div');
+      handNameEl.className = 'showdown-hand-name';
+      if (state.playerEvals && state.playerEvals[player.idx]) {
+        handNameEl.textContent = state.playerEvals[player.idx].name;
+      }
+      row.appendChild(handNameEl);
+
+      handsEl.appendChild(row);
+    }
+  }
+
+  function renderFoldResult(state, localPlayerIdx) {
+    var handsEl = document.getElementById('showdown-hands');
+    if (!handsEl) return;
+    handsEl.innerHTML = '';
+    // No hands to display on fold
+  }
+
+  function isCardInWinning(card, winCards) {
+    if (!card || card.hidden || !winCards) return false;
+    for (var i = 0; i < winCards.length; i++) {
+      if (winCards[i].rank === card.rank && winCards[i].suit === card.suit) return true;
+    }
+    return false;
+  }
+
+  function highlightWinningCommunityCards(state) {
+    if (!state.playerEvals) return;
+    var winnerEval = state.winner >= 0 ? state.playerEvals[state.winner] : null;
+    if (!winnerEval || !winnerEval.cards) return;
+    var communityEl = document.getElementById('community-cards');
+    if (!communityEl) return;
+    var cardEls = communityEl.querySelectorAll('.card');
+    for (var i = 0; i < cardEls.length; i++) {
+      var card = state.communityCards && state.communityCards[i];
+      if (card && isCardInWinning(card, winnerEval.cards)) {
+        cardEls[i].classList.add('card-winner');
+      }
+    }
+  }
+
   function renderShowdown(state, localPlayerIdx) {
-    const overlay = document.getElementById('showdown-overlay');
+    var overlay = document.getElementById('showdown-overlay');
     if (!overlay) return;
 
     if (state.phase === 'showdown') {
       overlay.style.display = 'flex';
-      const msgEl = document.getElementById('showdown-message');
+      overlay.className = 'showdown-active';
+      var msgEl = document.getElementById('showdown-message');
+      var potAwardEl = document.getElementById('showdown-pot-award');
+
+      renderShowdownHands(state, localPlayerIdx);
+      highlightWinningCommunityCards(state);
+
       if (msgEl) {
         if (state.winner === -1) {
-          msgEl.textContent = 'Split Pot!';
+          msgEl.innerHTML = '<span class="win-text">Split Pot!</span>';
         } else if (state.winner === localPlayerIdx) {
-          const hand = state.winningHand;
-          msgEl.innerHTML = `<span class="win-text">You Win!</span><br><small>${hand ? hand.name : ''}</small>`;
+          msgEl.innerHTML = '<span class="win-text">You Win!</span>';
         } else {
-          const opponentIdx = (localPlayerIdx + 1) % 2;
-          const opponentName = state.players[opponentIdx].name;
-          const hand = state.winningHand;
-          msgEl.innerHTML = `<span class="lose-text">${opponentName} Wins</span><br><small>${hand ? hand.name : ''}</small>`;
+          var opponentIdx = (localPlayerIdx + 1) % 2;
+          var opponentName = state.players[opponentIdx].name;
+          msgEl.innerHTML = '<span class="lose-text">' + escapeHtml(opponentName) + ' Wins</span>';
         }
       }
+
+      if (potAwardEl) {
+        var potDisplay = state.lastPotAwarded || state.pot;
+        potAwardEl.textContent = potDisplay > 0 ? 'Won $' + potDisplay : '';
+      }
+
+    } else if (state.phase === 'fold') {
+      overlay.style.display = 'flex';
+      overlay.className = 'fold-active';
+      renderFoldResult(state, localPlayerIdx);
+      var msgEl2 = document.getElementById('showdown-message');
+      var potAwardEl2 = document.getElementById('showdown-pot-award');
+      if (msgEl2) {
+        if (state.winner === localPlayerIdx) {
+          msgEl2.innerHTML = '<span class="win-text">Opponent Folded - You Win!</span>';
+        } else {
+          var oppIdx = (localPlayerIdx + 1) % 2;
+          var oppName = state.players[oppIdx].name;
+          msgEl2.innerHTML = '<span class="lose-text">You Folded - ' + escapeHtml(oppName) + ' Wins</span>';
+        }
+      }
+      if (potAwardEl2) {
+        var foldPot = state.lastPotAwarded || state.pot;
+        potAwardEl2.textContent = foldPot > 0 ? 'Won $' + foldPot : '';
+      }
+
     } else if (state.phase === 'gameover') {
       overlay.style.display = 'flex';
-      const msgEl = document.getElementById('showdown-message');
-      if (msgEl) {
+      overlay.className = 'showdown-active';
+      renderShowdownHands(state, localPlayerIdx);
+      highlightWinningCommunityCards(state);
+      var msgEl3 = document.getElementById('showdown-message');
+      if (msgEl3) {
         if (state.winner === localPlayerIdx) {
-          msgEl.innerHTML = '<span class="win-text">Game Over - You Win!</span>';
+          msgEl3.innerHTML = '<span class="win-text gameover-text">GAME OVER - You Win!</span>';
         } else {
-          const opponentIdx = (localPlayerIdx + 1) % 2;
-          const opponentName = state.players[opponentIdx].name;
-          msgEl.innerHTML = `<span class="lose-text">Game Over - ${opponentName} Wins</span>`;
+          var oIdx = (localPlayerIdx + 1) % 2;
+          var oName = state.players[oIdx].name;
+          msgEl3.innerHTML = '<span class="lose-text gameover-text">GAME OVER - ' + escapeHtml(oName) + ' Wins</span>';
         }
       }
     } else {
       overlay.style.display = 'none';
+      overlay.className = '';
+      var hEl = document.getElementById('showdown-hands');
+      if (hEl) hEl.innerHTML = '';
+      // Clear card animation cache when new hand starts
+      lastRenderedCards = {};
     }
   }
 
@@ -273,13 +441,14 @@ const UI = (function () {
     document.getElementById('lobby-screen').style.display = 'flex';
     document.getElementById('game-screen').style.display = 'none';
     document.getElementById('connecting-screen').style.display = 'none';
+    lastRenderedCards = {};
   }
 
   function showConnecting(msg) {
     document.getElementById('lobby-screen').style.display = 'none';
     document.getElementById('game-screen').style.display = 'none';
     document.getElementById('connecting-screen').style.display = 'flex';
-    const el = document.getElementById('connecting-message');
+    var el = document.getElementById('connecting-message');
     if (el) el.textContent = msg || 'Connecting...';
   }
 
@@ -290,16 +459,19 @@ const UI = (function () {
   }
 
   function showError(msg) {
-    const el = document.getElementById('error-message');
+    var el = document.getElementById('error-message');
     if (el) {
       el.textContent = msg;
       el.style.display = 'block';
-      setTimeout(() => { el.style.display = 'none'; }, 5000);
+      el.style.animation = 'none';
+      el.offsetHeight; // reflow
+      el.style.animation = 'toast-in 0.3s ease-out';
+      setTimeout(function() { el.style.display = 'none'; }, 4000);
     }
   }
 
   function showStatus(msg) {
-    const el = document.getElementById('status-message');
+    var el = document.getElementById('status-message');
     if (el) {
       el.textContent = msg;
     }
@@ -314,13 +486,13 @@ const UI = (function () {
   }
 
   return {
-    renderTable,
-    renderCard,
-    showLobby,
-    showConnecting,
-    showGame,
-    showError,
-    showStatus
+    renderTable: renderTable,
+    renderCard: renderCard,
+    showLobby: showLobby,
+    showConnecting: showConnecting,
+    showGame: showGame,
+    showError: showError,
+    showStatus: showStatus
   };
 })();
 
