@@ -23,13 +23,16 @@
     </div>
 
     <div class="lobby-section">
-      <button class="btn btn-primary" id="btn-host">Host a Game</button>
+      <button class="btn btn-primary" id="btn-solo">Play Solo</button>
     </div>
 
-    <div class="lobby-divider">or</div>
+    <div class="lobby-divider">or play with a friend</div>
 
     <div class="lobby-section">
-      <h3>Join a Game</h3>
+      <button class="btn btn-secondary" id="btn-host">Host a Game</button>
+    </div>
+
+    <div class="lobby-section">
       <input type="text" id="room-code-input" placeholder="Enter room code" maxlength="6" autocomplete="off"
              style="text-transform:uppercase; letter-spacing:4px; text-align:center; margin-bottom:10px;">
       <button class="btn btn-secondary" id="btn-join">Join Game</button>
@@ -148,6 +151,7 @@
 <script src="js/game.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/peer.js"></script>
+<script src="js/bot.js"></script>
 <script>
 (function () {
   'use strict';
@@ -155,17 +159,21 @@
   var game = null;
   var localPlayerIdx = -1;
   var isHost = false;
+  var soloMode = false;
+  var botPlayerIdx = 1;
   var pendingGuestName = null;
   var nextHandTimer = null;
   var countdownInterval = null;
   var gameState = null;
   var lastTurnPlayerIdx = -1; // track turns for notification
   var turnBannerEl = null;
+  var botTurnTimer = null;
 
   // DOM refs
   var els = {
     playerName: document.getElementById('player-name'),
     roomCodeInput: document.getElementById('room-code-input'),
+    btnSolo: document.getElementById('btn-solo'),
     btnHost: document.getElementById('btn-host'),
     btnJoin: document.getElementById('btn-join'),
     btnCancel: document.getElementById('btn-cancel'),
@@ -224,6 +232,28 @@
     }
     lastTurnPlayerIdx = state.currentPlayerIdx;
   }
+
+  // ── Solo Mode ────────────────────────────────────────────────────────────
+  els.btnSolo.addEventListener('click', function () {
+    var name = (els.playerName.value || 'You').trim();
+    if (!name) { UI.showError('Enter your name first'); return; }
+    soloMode = true;
+    isHost = true;
+    localPlayerIdx = 0;
+    botPlayerIdx = 1;
+
+    game = new GameEngine();
+    game.setPlayerNames(name, 'Bot');
+    UI.showGame();
+    els.bettingControls.style.display = 'flex';
+    els.btnNewGame.style.display = 'inline-flex';
+    lastTurnPlayerIdx = -1;
+    game.startHand();
+    sfxDeal();
+    startConnectionMonitor();
+    updateLocalView();
+    scheduleBotTurnIfNeeded();
+  });
 
   // ── Lobby Events ──────────────────────────────────────────────────────────
   els.btnHost.addEventListener('click', function () {
@@ -286,8 +316,10 @@
 
   els.btnDisconnect.addEventListener('click', function () {
     if (confirm('Leave the game?')) {
-      Network.disconnect();
+      if (botTurnTimer) { clearTimeout(botTurnTimer); botTurnTimer = null; }
+      if (!soloMode) Network.disconnect();
       game = null;
+      soloMode = false;
       UI.showLobby();
     }
   });
@@ -411,7 +443,7 @@
     connCheckInterval = setInterval(function () {
       var dot = els.connectionDot;
       if (!dot) return;
-      dot.className = Network.isConnected() ? 'conn-dot conn-green' : 'conn-dot conn-red';
+      dot.className = (soloMode || Network.isConnected()) ? 'conn-dot conn-green' : 'conn-dot conn-red';
     }, 2000);
   }
 
@@ -431,12 +463,22 @@
   });
 
   function submitAction(action, amount) {
-    if (!Network.isConnected()) {
+    if (!soloMode && !Network.isConnected()) {
       UI.showError('Not connected to opponent');
       return;
     }
 
-    if (isHost) {
+    if (soloMode) {
+      var result = game.placeBet(localPlayerIdx, action, amount);
+      if (result && result.error) {
+        UI.showError(result.error);
+        return;
+      }
+      updateLocalView();
+      checkPhaseTransitions();
+      scheduleBotTurnIfNeeded();
+      return;
+    } else if (isHost) {
       var result = game.placeBet(localPlayerIdx, action, amount);
       if (result && result.error) {
         UI.showError(result.error);
@@ -462,14 +504,14 @@
 
   // ── Showdown / Next Hand / Fold ────────────────────────────────────────
   els.btnNextHand.addEventListener('click', function () {
-    if (isHost) startNextHand();
+    if (isHost || soloMode) startNextHand();
   });
 
   els.btnRestart.addEventListener('click', function () {
-    if (isHost) {
+    if (isHost || soloMode) {
       game.fullReset();
       game.players[0].name = getLocalName();
-      game.players[1].name = pendingGuestName || 'Guest';
+      game.players[1].name = soloMode ? 'Bot' : (pendingGuestName || 'Guest');
       game.players[0].chips = game.startingChips;
       game.players[1].chips = game.startingChips;
       startNextHand();
@@ -477,10 +519,10 @@
   });
 
   els.btnNewGame.addEventListener('click', function () {
-    if (isHost) {
+    if (isHost || soloMode) {
       game.fullReset();
       game.players[0].name = getLocalName();
-      game.players[1].name = pendingGuestName || 'Guest';
+      game.players[1].name = soloMode ? 'Bot' : (pendingGuestName || 'Guest');
       game.players[0].chips = game.startingChips;
       game.players[1].chips = game.startingChips;
       startNextHand();
@@ -511,8 +553,9 @@
     lastTurnPlayerIdx = -1;
     game.startHand();
     sfxDeal();
-    broadcastState();
+    if (!soloMode) broadcastState();
     updateLocalView();
+    if (soloMode) scheduleBotTurnIfNeeded();
   }
 
   function clearTimers() {
@@ -649,23 +692,24 @@
     if (!game) return;
     var phase = game.phase;
 
+    var canControl = isHost || soloMode;
+
     if (phase === 'showdown') {
-      els.btnNextHand.style.display = isHost ? 'inline-flex' : 'none';
+      els.btnNextHand.style.display = canControl ? 'inline-flex' : 'none';
       els.btnRestart.style.display = 'none';
-      if (isHost && game.winner === 0) sfxWin();
-      else if (isHost && game.winner === 1) sfxFold();
+      if (canControl && game.winner === 0) sfxWin();
+      else if (canControl && game.winner === 1) sfxFold();
       scheduleNextHand(6);
 
     } else if (phase === 'fold') {
-      els.btnNextHand.style.display = isHost ? 'inline-flex' : 'none';
+      els.btnNextHand.style.display = canControl ? 'inline-flex' : 'none';
       els.btnRestart.style.display = 'none';
-      // Shorter delay for folds
       scheduleNextHand(3);
 
     } else if (phase === 'gameover') {
       els.btnNextHand.style.display = 'none';
-      els.btnRestart.style.display = isHost ? 'inline-flex' : 'none';
-      els.btnNewGame.style.display = isHost ? 'inline-flex' : 'none';
+      els.btnRestart.style.display = canControl ? 'inline-flex' : 'none';
+      els.btnNewGame.style.display = canControl ? 'inline-flex' : 'none';
       clearTimers();
 
     } else {
@@ -673,11 +717,11 @@
       els.btnRestart.style.display = 'none';
     }
 
-    if (isHost) {
+    if (isHost || soloMode) {
       var isMyTurn = game.currentPlayerIdx === 0;
       var isBettingPhase = phase === 'preflop' || phase === 'flop' || phase === 'turn' || phase === 'river';
       if (isBettingPhase) {
-        UI.showStatus(isMyTurn ? 'Your turn' : "Opponent's turn");
+        UI.showStatus(isMyTurn ? 'Your turn' : (soloMode ? 'Bot is thinking...' : "Opponent's turn"));
       }
     }
   }
@@ -696,6 +740,50 @@
 
   function getLocalName() {
     return (els.playerName.value || (isHost ? 'Host' : 'Guest')).trim();
+  }
+
+  // ── Bot Turn Logic ─────────────────────────────────────────────────────
+
+  function scheduleBotTurnIfNeeded() {
+    if (!soloMode || !game) return;
+    if (botTurnTimer) { clearTimeout(botTurnTimer); botTurnTimer = null; }
+
+    var phase = game.phase;
+    if (phase === 'showdown' || phase === 'fold' || phase === 'gameover' || phase === 'lobby') return;
+    if (game.currentPlayerIdx !== botPlayerIdx) return;
+
+    // Bot "thinks" for 0.8-2.5 seconds
+    var delay = 800 + Math.floor(Math.random() * 1700);
+    botTurnTimer = setTimeout(function () {
+      botTurnTimer = null;
+      if (!game || game.currentPlayerIdx !== botPlayerIdx) return;
+
+      var state = game.getState(botPlayerIdx);
+      var decision = PokerBot.decide(state, botPlayerIdx);
+
+      var result;
+      if (decision.action === 'raise') {
+        result = game.placeBet(botPlayerIdx, 'raise', decision.amount);
+      } else {
+        result = game.placeBet(botPlayerIdx, decision.action);
+      }
+
+      if (result && result.error) {
+        // Fallback: if raise fails, try call/check, then fold
+        result = game.placeBet(botPlayerIdx, 'call');
+        if (result && result.error) {
+          result = game.placeBet(botPlayerIdx, 'check');
+          if (result && result.error) {
+            game.placeBet(botPlayerIdx, 'fold');
+          }
+        }
+      }
+
+      updateLocalView();
+      checkPhaseTransitions();
+      // Recursively schedule if still bot's turn (e.g. after phase advance)
+      scheduleBotTurnIfNeeded();
+    }, delay);
   }
 
   // ── Initialize ─────────────────────────────────────────────────────────
