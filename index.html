@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Heads-Up Texas Hold'em</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ─── Error Toast ────────────────────────────────────────────────────────── -->
+<div id="error-message"></div>
+
+<!-- ─── Lobby Screen ────────────────────────────────────────────────────────── -->
+<div id="lobby-screen" class="screen">
+  <div class="lobby-card">
+    <div class="lobby-title">Texas Hold'em</div>
+    <div class="lobby-subtitle">2-Player Heads-Up Poker</div>
+
+    <div class="lobby-section">
+      <h3>Your Name</h3>
+      <input type="text" id="player-name" placeholder="Enter your name" maxlength="20" autocomplete="off">
+    </div>
+
+    <div class="lobby-section">
+      <button class="btn btn-primary" id="btn-host">Host a Game</button>
+    </div>
+
+    <div class="lobby-divider">or</div>
+
+    <div class="lobby-section">
+      <h3>Join a Game</h3>
+      <input type="text" id="room-code-input" placeholder="Enter room code" maxlength="6" autocomplete="off"
+             style="text-transform:uppercase; letter-spacing:4px; text-align:center; margin-bottom:10px;">
+      <button class="btn btn-secondary" id="btn-join">Join Game</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Connecting Screen ───────────────────────────────────────────────────── -->
+<div id="connecting-screen" class="screen" style="display:none; flex-direction:column; gap:20px; text-align:center;">
+  <div style="font-size:1.1rem; color:rgba(255,255,255,0.7);" id="connecting-message">Waiting for opponent...</div>
+
+  <div id="room-code-wrapper" style="display:none; flex-direction:column; align-items:center; gap:12px;">
+    <div style="font-size:0.85rem; color:rgba(255,255,255,0.5);">Share this room code:</div>
+    <div class="room-code-display" id="room-code-display">------</div>
+    <button class="btn btn-sm btn-secondary" id="btn-copy-code" style="width:auto; padding:8px 20px;">Copy Code</button>
+  </div>
+
+  <div class="spinner" style="margin: 0 auto;"></div>
+
+  <button class="btn btn-secondary" id="btn-cancel" style="width:auto; padding:10px 28px; margin:0 auto;">Cancel</button>
+</div>
+
+<!-- ─── Game Screen ─────────────────────────────────────────────────────────── -->
+<div id="game-screen" class="screen" style="display:none; flex-direction:column;">
+
+  <!-- Header -->
+  <div class="game-header">
+    <span class="game-header-title">Texas Hold'em</span>
+    <div id="status-message"></div>
+    <div class="game-header-actions">
+      <button class="btn btn-sm btn-secondary" id="btn-new-game" style="display:none;">New Game</button>
+      <button class="btn btn-sm btn-danger" id="btn-disconnect">Leave</button>
+    </div>
+  </div>
+
+  <!-- Table Wrapper -->
+  <div class="table-wrapper">
+    <div class="poker-table">
+
+      <!-- Opponent (top) -->
+      <div class="player-area" id="player-opponent">
+        <div class="player-cards" id="opp-cards"></div>
+        <div class="player-info">
+          <div class="player-name" id="opp-name">Opponent</div>
+          <div class="player-chips" id="opp-chips">$1000</div>
+          <div class="player-bet" id="opp-bet"></div>
+          <div class="player-status" id="opp-status"></div>
+        </div>
+        <div class="dealer-btn" id="opp-dealer" style="display:none;">D</div>
+      </div>
+
+      <!-- Center: Community Cards + Pot -->
+      <div class="table-center">
+        <div class="phase-label" id="phase-label">Waiting...</div>
+        <div class="community-row" id="community-cards"></div>
+        <div class="pot-display">
+          <span class="pot-label">Pot</span>
+          <span id="pot-amount">$0</span>
+        </div>
+      </div>
+
+      <!-- Local Player (bottom) -->
+      <div class="player-area" id="player-local">
+        <div class="player-cards" id="local-cards"></div>
+        <div class="player-info">
+          <div class="player-name" id="local-name">You</div>
+          <div class="player-chips" id="local-chips">$1000</div>
+          <div class="player-bet" id="local-bet"></div>
+          <div class="player-status" id="local-status"></div>
+        </div>
+        <div class="dealer-btn" id="local-dealer" style="display:none;">D</div>
+      </div>
+
+      <!-- Showdown Overlay (inside table) -->
+      <div id="showdown-overlay">
+        <div id="showdown-message"></div>
+        <div class="showdown-actions">
+          <button class="btn btn-primary" id="btn-next-hand" style="display:none;">Next Hand</button>
+          <button class="btn btn-secondary" id="btn-restart" style="display:none;">New Game</button>
+        </div>
+      </div>
+
+    </div><!-- /.poker-table -->
+  </div><!-- /.table-wrapper -->
+
+  <!-- Game Log -->
+  <div class="game-log" id="game-log"></div>
+
+  <!-- Betting Controls -->
+  <div id="betting-controls" style="display:none;">
+    <button class="btn" id="btn-fold">Fold</button>
+    <button class="btn" id="btn-check-call" data-action="check">Check</button>
+    <div class="raise-controls">
+      <input type="range" id="raise-slider" min="20" max="1000" value="40" step="10">
+      <input type="number" id="raise-amount" min="20" max="1000" value="40" step="10">
+    </div>
+    <button class="btn" id="btn-raise">Raise</button>
+  </div>
+
+</div><!-- /#game-screen -->
+
+<!-- ─── Scripts ─────────────────────────────────────────────────────────────── -->
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="js/game.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/peer.js"></script>
+<script>
+// ─── App Controller ────────────────────────────────────────────────────────────
+(function () {
+  'use strict';
+
+  let game = null;
+  let localPlayerIdx = -1;
+  let isHost = false;
+  let pendingGuestName = null;
+  let nextHandTimer = null;
+  let gameState = null; // cached for guest
+
+  // ── DOM References ──────────────────────────────────────────────────────────
+  const els = {
+    playerName: document.getElementById('player-name'),
+    roomCodeInput: document.getElementById('room-code-input'),
+    btnHost: document.getElementById('btn-host'),
+    btnJoin: document.getElementById('btn-join'),
+    btnCancel: document.getElementById('btn-cancel'),
+    btnCopyCode: document.getElementById('btn-copy-code'),
+    roomCodeDisplay: document.getElementById('room-code-display'),
+    roomCodeWrapper: document.getElementById('room-code-wrapper'),
+    btnFold: document.getElementById('btn-fold'),
+    btnCheckCall: document.getElementById('btn-check-call'),
+    btnRaise: document.getElementById('btn-raise'),
+    raiseSlider: document.getElementById('raise-slider'),
+    raiseAmount: document.getElementById('raise-amount'),
+    btnNextHand: document.getElementById('btn-next-hand'),
+    btnRestart: document.getElementById('btn-restart'),
+    btnDisconnect: document.getElementById('btn-disconnect'),
+    btnNewGame: document.getElementById('btn-new-game'),
+    oppCards: document.getElementById('opp-cards'),
+    oppName: document.getElementById('opp-name'),
+    oppChips: document.getElementById('opp-chips'),
+    oppBet: document.getElementById('opp-bet'),
+    oppStatus: document.getElementById('opp-status'),
+    oppDealer: document.getElementById('opp-dealer'),
+    localCards: document.getElementById('local-cards'),
+    localName: document.getElementById('local-name'),
+    localChips: document.getElementById('local-chips'),
+    localBet: document.getElementById('local-bet'),
+    localStatus: document.getElementById('local-status'),
+    localDealer: document.getElementById('local-dealer'),
+    communityCards: document.getElementById('community-cards'),
+    potAmount: document.getElementById('pot-amount'),
+    phaseLabel: document.getElementById('phase-label'),
+    gameLog: document.getElementById('game-log'),
+    bettingControls: document.getElementById('betting-controls'),
+    showdownOverlay: document.getElementById('showdown-overlay'),
+    showdownMessage: document.getElementById('showdown-message'),
+    statusMessage: document.getElementById('status-message'),
+  };
+
+  // Fix: player area DOM references (ids for finding sub-elements)
+  function setupPlayerAreaRefs() {
+    // Override the sub-element IDs to match the DOM structure above
+    const oppArea = document.getElementById('player-opponent');
+    const localArea = document.getElementById('player-local');
+    // Attach named refs to matching elements inside areas
+    if (oppArea) {
+      oppArea.querySelector('.player-cards') || oppArea.insertBefore(Object.assign(document.createElement('div'), {className: 'player-cards', id: 'opp-cards-inner'}), oppArea.firstChild);
+    }
+  }
+
+  // ── Lobby Events ────────────────────────────────────────────────────────────
+  els.btnHost.addEventListener('click', function () {
+    const name = (els.playerName.value || 'Andres').trim();
+    if (!name) { UI.showError('Enter your name first'); return; }
+    isHost = true;
+    localPlayerIdx = 0;
+
+    UI.showConnecting('Waiting for opponent to join...');
+    els.roomCodeWrapper.style.display = 'flex';
+
+    Network.hostGame(name, {
+      onRoomCodeReady: function (code) {
+        els.roomCodeDisplay.textContent = code;
+      },
+      onConnected: function (idx) {
+        UI.showStatus('Opponent connected! Starting game...');
+      },
+      onMessage: handleNetworkMessage,
+      onDisconnected: handleDisconnect,
+      onError: function (msg) { UI.showError(msg); }
+    });
+  });
+
+  els.btnJoin.addEventListener('click', function () {
+    const name = (els.playerName.value || 'Henning').trim();
+    const code = els.roomCodeInput.value.toUpperCase().trim();
+    if (!name) { UI.showError('Enter your name first'); return; }
+    if (code.length < 6) { UI.showError('Enter a 6-character room code'); return; }
+    isHost = false;
+    localPlayerIdx = 1;
+
+    UI.showConnecting('Connecting to game...');
+
+    Network.joinGame(code, name, {
+      onConnected: function (idx) {
+        UI.showStatus('Connected! Waiting for host to start...');
+        // Send our name to the host
+        Network.sendMessage({ type: 'name', name: name, playerIdx: 1 });
+      },
+      onMessage: handleNetworkMessage,
+      onDisconnected: handleDisconnect,
+      onError: function (msg) { UI.showError(msg); }
+    });
+  });
+
+  els.btnCancel.addEventListener('click', function () {
+    Network.disconnect();
+    UI.showLobby();
+  });
+
+  els.btnCopyCode.addEventListener('click', function () {
+    const code = els.roomCodeDisplay.textContent;
+    navigator.clipboard.writeText(code).then(function () {
+      els.btnCopyCode.textContent = 'Copied!';
+      setTimeout(function () { els.btnCopyCode.textContent = 'Copy Code'; }, 2000);
+    }).catch(function () {
+      els.btnCopyCode.textContent = code; // show the code in the button as fallback
+    });
+  });
+
+  els.btnDisconnect.addEventListener('click', function () {
+    if (confirm('Leave the game?')) {
+      Network.disconnect();
+      game = null;
+      UI.showLobby();
+    }
+  });
+
+  // ── Raise Controls Sync ─────────────────────────────────────────────────────
+  els.raiseSlider.addEventListener('input', function () {
+    els.raiseAmount.value = this.value;
+    updateRaiseButton();
+  });
+  els.raiseAmount.addEventListener('input', function () {
+    let v = parseInt(this.value) || 0;
+    v = Math.max(parseInt(els.raiseSlider.min), Math.min(parseInt(els.raiseSlider.max), v));
+    els.raiseSlider.value = v;
+    this.value = v;
+    updateRaiseButton();
+  });
+  function updateRaiseButton() {
+    els.btnRaise.textContent = 'Raise to $' + (els.raiseAmount.value || els.raiseSlider.value);
+  }
+
+  // ── Betting Action Events ───────────────────────────────────────────────────
+  els.btnFold.addEventListener('click', function () { submitAction('fold'); });
+  els.btnCheckCall.addEventListener('click', function () {
+    const action = this.dataset.action || 'check';
+    submitAction(action);
+  });
+  els.btnRaise.addEventListener('click', function () {
+    const amount = parseInt(els.raiseAmount.value) || parseInt(els.raiseSlider.value);
+    submitAction('raise', amount);
+  });
+
+  function submitAction(action, amount) {
+    if (!Network.isConnected()) {
+      UI.showError('Not connected to opponent');
+      return;
+    }
+
+    if (isHost) {
+      // Host runs game engine locally
+      const result = game.placeBet(localPlayerIdx, action, amount);
+      if (result && result.error) {
+        UI.showError(result.error);
+        return;
+      }
+      broadcastState();
+      updateLocalView();
+      checkPhaseTransitions();
+    } else {
+      // Guest sends action to host
+      Network.sendAction(action, amount);
+      // Disable controls while waiting for state update
+      disableControls();
+    }
+  }
+
+  function disableControls() {
+    els.bettingControls.classList.remove('controls-active');
+    ['btn-fold','btn-check-call','btn-raise'].forEach(function (id) {
+      const el = document.getElementById(id);
+      if (el) el.disabled = true;
+    });
+  }
+
+  // ── Showdown / Next Hand ────────────────────────────────────────────────────
+  els.btnNextHand.addEventListener('click', function () {
+    if (isHost) {
+      startNextHand();
+    }
+    // Guest: wait for host to start next hand
+  });
+
+  els.btnRestart.addEventListener('click', function () {
+    if (isHost) {
+      game.fullReset();
+      // Keep player names
+      game.players[0].name = Network.getIsHost() ? getLocalName() : 'Host';
+      game.players[1].name = pendingGuestName || 'Guest';
+      game.players[0].chips = game.startingChips;
+      game.players[1].chips = game.startingChips;
+      startNextHand();
+    }
+  });
+
+  els.btnNewGame.addEventListener('click', function () {
+    if (isHost) {
+      game.fullReset();
+      game.players[0].name = getLocalName();
+      game.players[1].name = pendingGuestName || 'Guest';
+      game.players[0].chips = game.startingChips;
+      game.players[1].chips = game.startingChips;
+      startNextHand();
+    } else {
+      UI.showError('Only the host can start a new game');
+    }
+  });
+
+  function startNextHand() {
+    if (nextHandTimer) { clearTimeout(nextHandTimer); nextHandTimer = null; }
+    game.startHand();
+    broadcastState();
+    updateLocalView();
+  }
+
+  // ── Network Message Handler ─────────────────────────────────────────────────
+  function handleNetworkMessage(msg) {
+    switch (msg.type) {
+      case 'name':
+        // Host receives guest name
+        if (isHost && msg.playerIdx === 1) {
+          pendingGuestName = msg.name;
+          // Now start the game
+          initGame(getLocalName(), msg.name);
+        }
+        break;
+
+      case 'start':
+        // Guest receives initial game state
+        if (!isHost) {
+          gameState = msg.state;
+          UI.showGame();
+          UI.renderTable(gameState, localPlayerIdx);
+          els.bettingControls.style.display = 'flex';
+        }
+        break;
+
+      case 'state':
+        // Guest receives updated game state
+        if (!isHost) {
+          gameState = msg.state;
+          UI.renderTable(gameState, localPlayerIdx);
+          handlePhaseOnGuest(gameState);
+        }
+        break;
+
+      case 'action':
+        // Host receives action from guest
+        if (isHost && msg.action) {
+          const result = game.placeBet(1, msg.action, msg.amount || 0);
+          if (result && result.error) {
+            // Send error back to guest? For now just log it.
+            console.warn('Guest action error:', result.error);
+          } else {
+            broadcastState();
+            updateLocalView();
+            checkPhaseTransitions();
+          }
+        }
+        break;
+
+      case 'nexthand':
+        // Host tells guest next hand is starting (already handled via state)
+        break;
+    }
+  }
+
+  function handlePhaseOnGuest(state) {
+    if (state.phase === 'showdown' || state.phase === 'gameover') {
+      els.btnNextHand.style.display = 'none'; // only host can proceed
+      els.btnRestart.style.display = state.phase === 'gameover' ? 'none' : 'none';
+      // Show waiting message
+      if (state.phase === 'gameover') {
+        UI.showStatus('Game over! Host can restart.');
+      } else {
+        UI.showStatus('Waiting for next hand...');
+      }
+    } else {
+      UI.showStatus(state.currentPlayerIdx === localPlayerIdx ? 'Your turn' : "Opponent's turn");
+    }
+  }
+
+  // ── Game Init ───────────────────────────────────────────────────────────────
+  function initGame(hostName, guestName) {
+    game = new GameEngine();
+    game.setPlayerNames(hostName, guestName);
+    UI.showGame();
+    els.bettingControls.style.display = 'flex';
+    els.btnNewGame.style.display = 'inline-flex';
+    game.startHand();
+    broadcastState(true); // send 'start' message to guest
+    updateLocalView();
+  }
+
+  function broadcastState(isStart) {
+    if (!Network.isConnected()) return;
+    // Guest receives state with host's cards hidden
+    const stateForGuest = game.getState(1);
+    if (isStart) {
+      Network.sendStart(stateForGuest);
+    } else {
+      Network.sendState(stateForGuest);
+    }
+  }
+
+  function updateLocalView() {
+    if (!game) return;
+    const state = game.getState(localPlayerIdx);
+    UI.renderTable(state, localPlayerIdx);
+    checkPhaseTransitions();
+  }
+
+  function checkPhaseTransitions() {
+    if (!game) return;
+    const phase = game.phase;
+
+    if (phase === 'showdown') {
+      els.btnNextHand.style.display = isHost ? 'inline-flex' : 'none';
+      els.btnRestart.style.display = 'none';
+      // Auto-start next hand after 4 seconds (host side)
+      if (isHost) {
+        if (nextHandTimer) clearTimeout(nextHandTimer);
+        nextHandTimer = setTimeout(startNextHand, 4000);
+      }
+    } else if (phase === 'gameover') {
+      els.btnNextHand.style.display = 'none';
+      els.btnRestart.style.display = isHost ? 'inline-flex' : 'none';
+      els.btnNewGame.style.display = isHost ? 'inline-flex' : 'none';
+      if (nextHandTimer) { clearTimeout(nextHandTimer); nextHandTimer = null; }
+    } else {
+      els.btnNextHand.style.display = 'none';
+      els.btnRestart.style.display = 'none';
+    }
+
+    if (isHost) {
+      const isMyTurn = game.currentPlayerIdx === 0;
+      UI.showStatus(isMyTurn ? 'Your turn' : "Opponent's turn");
+    }
+  }
+
+  function handleDisconnect() {
+    UI.showError('Opponent disconnected. The game will end.');
+    // If in a hand, give them the pot (auto-fold opponent)
+    if (game && game.phase !== 'lobby' && game.phase !== 'showdown' && game.phase !== 'gameover') {
+      if (isHost) {
+        // Guest disconnected: host wins current pot
+        const hostWins = game.players[0];
+        const guestLost = game.players[1];
+        guestLost.folded = true;
+        game.endHand(0, 'fold', null, null);
+        broadcastState();
+        updateLocalView();
+      }
+    }
+  }
+
+  function getLocalName() {
+    return (els.playerName.value || (isHost ? 'Andres' : 'Henning')).trim();
+  }
+
+  // ── Initialize UI State ─────────────────────────────────────────────────────
+  UI.showLobby();
+
+  // Pre-fill names based on common users
+  if (!els.playerName.value) {
+    // default left blank for user to fill
+  }
+
+})();
+</script>
+</body>
+</html>
