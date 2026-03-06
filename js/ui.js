@@ -120,7 +120,7 @@ const UI = (function () {
     const opponentArea = document.getElementById('player-opponent');
     if (opponentArea) {
       const isOpponentCurrent = state.currentPlayerIdx === opponentIdx;
-      const isOpponentDealer = state.dealerIdx === opponentIdx;
+      const isOpponentDealer = state.dealerButton === opponentIdx;
       renderPlayer(opponentPlayer, false, isOpponentCurrent, isOpponentDealer, opponentArea);
     }
 
@@ -128,7 +128,7 @@ const UI = (function () {
     const localArea = document.getElementById('player-local');
     if (localArea) {
       const isLocalCurrent = state.currentPlayerIdx === localPlayerIdx;
-      const isLocalDealer = state.dealerIdx === localPlayerIdx;
+      const isLocalDealer = state.dealerButton === localPlayerIdx;
       renderPlayer(localPlayer, true, isLocalCurrent, isLocalDealer, localArea);
     }
 

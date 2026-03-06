@@ -192,7 +192,7 @@ class GameEngine {
     this.communityCards = [];
     this.deck = [];
     this.currentPlayerIdx = 0;
-    this.dealerIdx = 0;
+    this.dealerButton = 0;
     this.phase = 'lobby';
     this.currentBet = 0;
     this.lastRaiseAmount = this.bigBlind;
@@ -232,8 +232,8 @@ class GameEngine {
     }
 
     // In heads-up: dealer = small blind (acts first preflop, last postflop)
-    const sbIdx = this.dealerIdx;
-    const bbIdx = (this.dealerIdx + 1) % 2;
+    const sbIdx = this.dealerButton;
+    const bbIdx = (this.dealerButton + 1) % 2;
 
     this.postBlind(sbIdx, this.smallBlind, 'small blind');
     this.postBlind(bbIdx, this.bigBlind, 'big blind');
@@ -435,7 +435,7 @@ class GameEngine {
     }
 
     // Post-flop: non-dealer acts first (big blind position, which is dealer+1)
-    this.currentPlayerIdx = (this.dealerIdx + 1) % 2;
+    this.currentPlayerIdx = (this.dealerButton + 1) % 2;
 
     // Handle case where that player is all-in
     this.handleAllInSkip();
@@ -518,8 +518,8 @@ class GameEngine {
       this.addLog(`Game over! ${winner.name} wins everything!`);
     }
 
-    // Advance dealer for next hand
-    this.dealerIdx = (this.dealerIdx + 1) % 2;
+    // Advance dealer button for next hand
+    this.dealerButton = (this.dealerButton + 1) % 2;
   }
 
   endHandTie(eval0, eval1) {
@@ -531,7 +531,7 @@ class GameEngine {
     this.players[1].chips += (this.pot - half);
     this.pot = 0;
     this.addLog(`Split pot! ${eval0.name} vs ${eval1.name}`);
-    this.dealerIdx = (this.dealerIdx + 1) % 2;
+    this.dealerButton = (this.dealerButton + 1) % 2;
   }
 
   addLog(msg) {
@@ -546,7 +546,7 @@ class GameEngine {
       communityCards: this.communityCards,
       pot: this.pot,
       currentPlayerIdx: this.currentPlayerIdx,
-      dealerIdx: this.dealerIdx,
+      dealerButton: this.dealerButton,
       currentBet: this.currentBet,
       lastRaiseAmount: this.lastRaiseAmount,
       handNumber: this.handNumber,
